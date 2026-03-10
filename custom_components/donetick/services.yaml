@@ -119,3 +119,105 @@ delete_task:
       required: false
       selector:
         text:
+skip_task:
+  name: Skip Task
+  description: Skip a Donetick task — advances the due date to the next occurrence without marking it complete
+  fields:
+    task_id:
+      name: Task ID
+      description: The ID of the task to skip
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    config_entry_id:
+      name: Config Entry ID
+      description: The specific Donetick integration to use (optional, uses first if not specified)
+      required: false
+      selector:
+        text:
+
+undo_complete:
+  name: Undo Complete
+  description: Undo the most recent completion of a Donetick task, restoring the previous due date
+  fields:
+    task_id:
+      name: Task ID
+      description: The ID of the task to uncomplete
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    config_entry_id:
+      name: Config Entry ID
+      description: The specific Donetick integration to use (optional, uses first if not specified)
+      required: false
+      selector:
+        text:
+
+update_schedule:
+  name: Update Schedule
+  description: Update the recurring schedule for a Donetick task (frequency, rolling, time of day)
+  fields:
+    task_id:
+      name: Task ID
+      description: The ID of the task to update
+      required: true
+      selector:
+        number:
+          min: 1
+          mode: box
+    frequency_type:
+      name: Frequency Type
+      description: "How often the task repeats: daily, weekly, monthly, yearly, days_of_the_week, interval_based"
+      required: false
+      selector:
+        select:
+          options:
+            - daily
+            - weekly
+            - monthly
+            - yearly
+            - days_of_the_week
+            - interval_based
+            - once
+    frequency:
+      name: Frequency
+      description: Frequency multiplier (e.g. 2 for every 2 weeks)
+      required: false
+      selector:
+        number:
+          min: 1
+          mode: box
+    is_rolling:
+      name: Rolling Schedule
+      description: "If true: next due is calculated from completion time. If false: fixed schedule anchored to time_of_day."
+      required: false
+      selector:
+        boolean:
+    time_of_day:
+      name: Time of Day
+      description: Time to anchor the schedule in HH:MM (24-hour) format, e.g. 00:00 for midnight
+      required: false
+      selector:
+        text:
+    timezone:
+      name: Timezone
+      description: Timezone for the time_of_day field (default: America/Chicago)
+      required: false
+      selector:
+        text:
+    next_due_date:
+      name: Next Due Date
+      description: Override the next due date (ISO 8601, e.g. 2026-03-15T00:00:00Z)
+      required: false
+      selector:
+        text:
+    config_entry_id:
+      name: Config Entry ID
+      description: The specific Donetick integration to use (optional, uses first if not specified)
+      required: false
+      selector:
+        text:
