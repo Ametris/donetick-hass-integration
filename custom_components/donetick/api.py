@@ -338,3 +338,131 @@ class DonetickApiClient:
         except Exception as err:
             _LOGGER.error("Error deleting task: %s", err)
             return False
+
+    async def async_skip_task(self, task_id: int) -> bool:
+        """Skip a task (advance to next occurrence without completing)."""
+        headers = {
+            "secretkey": f"{self._token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with self._session.post(
+                f"{self._base_url}/eapi/v1/chore/{task_id}/skip",
+                headers=headers,
+                timeout=API_TIMEOUT,
+            ) as response:
+                response.raise_for_status()
+                return True
+        except aiohttp.ClientError as err:
+            _LOGGER.error("Error skipping task %d in Donetick: %s", task_id, err)
+            raise
+        except Exception as err:
+            _LOGGER.error("Error skipping task %d: %s", task_id, err)
+            return False
+
+    async def async_uncomplete_task(self, task_id: int) -> bool:
+        """Undo the most recent completion of a task."""
+        headers = {
+            "secretkey": f"{self._token}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with self._session.post(
+                f"{self._base_url}/eapi/v1/chore/{task_id}/uncomplete",
+                headers=headers,
+                timeout=API_TIMEOUT,
+            ) as response:
+                response.raise_for_status()
+                return True
+        except aiohttp.ClientError as err:
+            _LOGGER.error("Error uncompleting task %d in Donetick: %s", task_id, err)
+            raise
+        except Exception as err:
+            _LOGGER.error("Error uncompleting task %d: %s", task_id, err)
+            return False
+
+    async def async_update_task_schedule(
+        self,
+        task_id: int,
+        frequency_type: Optional[str] = None,
+        frequency: Optional[int] = None,
+        frequency_metadata: Optional[dict] = None,
+        is_rolling: Optional[bool] = None,
+        next_due_date: Optional[str] = None,
+    ) -> bool:
+        """Update a task's schedule fields (frequencyType, isRolling, time, etc).
+
+        Fetches the full chore first, merges only the changed fields, then PUTs
+        back the complete object — avoiding the 'Invalid request format' error
+        caused by sending a partial payload to the Donetick API.
+        """
+        headers = {
+            "secretkey": f"{self._token}",
+            "Content-Type": "application/json",
+        }
+
+        # Step 1: fetch current chore — try single-item endpoint first,
+        # fall back to filtering the full list (some Donetick versions lack GET /chore/{id})
+        chore = None
+        try:
+            async with self._session.get(
+                f"{self._base_url}/eapi/v1/chore/{task_id}",
+                headers=headers,
+                timeout=API_TIMEOUT,
+            ) as response:
+                if response.status == 200:
+                    chore = await response.json()
+                else:
+                    _LOGGER.debug(
+                        "GET /eapi/v1/chore/%d returned %d, falling back to list",
+                        task_id, response.status,
+                    )
+        except aiohttp.ClientError as err:
+            _LOGGER.debug("Single-chore GET failed for %d (%s), trying list fallback", task_id, err)
+
+        if chore is None:
+            # Fallback: fetch full list and find by ID
+            try:
+                async with self._session.get(
+                    f"{self._base_url}/eapi/v1/chore",
+                    headers=headers,
+                    timeout=API_TIMEOUT,
+                ) as response:
+                    response.raise_for_status()
+                    all_chores = await response.json()
+                    matches = [c for c in all_chores if c.get("id") == task_id]
+                    if not matches:
+                        raise ValueError(f"Chore {task_id} not found in list")
+                    chore = matches[0]
+            except aiohttp.ClientError as err:
+                _LOGGER.error("Error fetching chore %d for schedule update: %s", task_id, err)
+                raise
+
+        # Step 2: merge requested changes
+        if frequency_type is not None:
+            chore["frequencyType"] = frequency_type
+        if frequency is not None:
+            chore["frequency"] = frequency
+        if frequency_metadata is not None:
+            chore["frequencyMetadata"] = frequency_metadata
+        if is_rolling is not None:
+            chore["isRolling"] = is_rolling
+        if next_due_date is not None:
+            chore["nextDueDate"] = next_due_date
+
+        # Step 3: PUT the full chore back
+        try:
+            async with self._session.put(
+                f"{self._base_url}/eapi/v1/chore/{task_id}",
+                headers=headers,
+                json=chore,
+                timeout=API_TIMEOUT,
+            ) as response:
+                response.raise_for_status()
+                return True
+        except aiohttp.ClientError as err:
+            _LOGGER.error("Error updating schedule for chore %d: %s", task_id, err)
+            raise
+        except Exception as err:
+            _LOGGER.error("Error updating schedule for chore %d: %s", task_id, err)
+            return False
