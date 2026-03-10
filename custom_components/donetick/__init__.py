@@ -1,10 +1,12 @@
 """The Donetick integration."""
 import logging
+from datetime import date
 import voluptuous as vol
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .const import DOMAIN, CONF_URL, CONF_TOKEN, CONF_SHOW_DUE_IN
 from .api import DonetickApiClient
@@ -17,6 +19,9 @@ SERVICE_COMPLETE_TASK = "complete_task"
 SERVICE_CREATE_TASK = "create_task"
 SERVICE_UPDATE_TASK = "update_task"
 SERVICE_DELETE_TASK = "delete_task"
+SERVICE_SKIP_TASK = "skip_task"
+SERVICE_UNDO_COMPLETE = "undo_complete"
+SERVICE_UPDATE_SCHEDULE = "update_schedule"
 
 COMPLETE_TASK_SCHEMA = vol.Schema({
     vol.Required("task_id"): cv.positive_int,
@@ -45,6 +50,27 @@ DELETE_TASK_SCHEMA = vol.Schema({
     vol.Optional("config_entry_id"): cv.string,
 })
 
+SKIP_TASK_SCHEMA = vol.Schema({
+    vol.Required("task_id"): cv.positive_int,
+    vol.Optional("config_entry_id"): cv.string,
+})
+
+UNDO_COMPLETE_SCHEMA = vol.Schema({
+    vol.Required("task_id"): cv.positive_int,
+    vol.Optional("config_entry_id"): cv.string,
+})
+
+UPDATE_SCHEDULE_SCHEMA = vol.Schema({
+    vol.Required("task_id"): cv.positive_int,
+    vol.Optional("frequency_type"): cv.string,
+    vol.Optional("frequency"): cv.positive_int,
+    vol.Optional("is_rolling"): cv.boolean,
+    vol.Optional("time_of_day"): cv.string,   # HH:MM in local time
+    vol.Optional("timezone"): cv.string,
+    vol.Optional("next_due_date"): cv.string,
+    vol.Optional("config_entry_id"): cv.string,
+})
+
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Donetick from a config entry."""
     hass.data.setdefault(DOMAIN, {})
@@ -66,6 +92,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     
     async def delete_task_handler(call: ServiceCall) -> None:
         await async_delete_task_service(hass, call)
+
+    async def skip_task_handler(call: ServiceCall) -> None:
+        await async_skip_task_service(hass, call)
+
+    async def undo_complete_handler(call: ServiceCall) -> None:
+        await async_undo_complete_service(hass, call)
+
+    async def update_schedule_handler(call: ServiceCall) -> None:
+        await async_update_schedule_service(hass, call)
     
     hass.services.async_register(
         DOMAIN,
@@ -91,9 +126,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         delete_task_handler,
         schema=DELETE_TASK_SCHEMA,
     )
-    _LOGGER.debug("Registered services: %s.%s, %s.%s, %s.%s, %s.%s", 
-                  DOMAIN, SERVICE_COMPLETE_TASK, DOMAIN, SERVICE_CREATE_TASK, 
-                  DOMAIN, SERVICE_UPDATE_TASK, DOMAIN, SERVICE_DELETE_TASK)
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_SKIP_TASK,
+        skip_task_handler,
+        schema=SKIP_TASK_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_UNDO_COMPLETE,
+        undo_complete_handler,
+        schema=UNDO_COMPLETE_SCHEMA,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_UPDATE_SCHEDULE,
+        update_schedule_handler,
+        schema=UPDATE_SCHEDULE_SCHEMA,
+    )
+    _LOGGER.debug(
+        "Registered services: %s.%s, %s.%s, %s.%s, %s.%s, %s.%s, %s.%s, %s.%s",
+        DOMAIN, SERVICE_COMPLETE_TASK, DOMAIN, SERVICE_CREATE_TASK,
+        DOMAIN, SERVICE_UPDATE_TASK, DOMAIN, SERVICE_DELETE_TASK,
+        DOMAIN, SERVICE_SKIP_TASK, DOMAIN, SERVICE_UNDO_COMPLETE,
+        DOMAIN, SERVICE_UPDATE_SCHEDULE,
+    )
     
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -115,7 +172,7 @@ async def async_complete_task_service(hass: HomeAssistant, call: ServiceCall) ->
         
         # If not found, check if it's an entity ID and extract config entry from it
         if not entry and config_entry_id.startswith("todo."):
-            entity_registry = hass.helpers.entity_registry.async_get()
+            entity_registry = er.async_get(hass)
             entity_entry = entity_registry.async_get(config_entry_id)
             if entity_entry:
                 entry = hass.config_entries.async_get_entry(entity_entry.config_entry_id)
@@ -144,13 +201,15 @@ async def async_complete_task_service(hass: HomeAssistant, call: ServiceCall) ->
         _LOGGER.info("Task %d completed successfully by user %s", task_id, completed_by or "default")
         
         # Trigger coordinator refresh for all todo entities
-        entity_registry = hass.helpers.entity_registry.async_get()
+        entity_registry = er.async_get(hass)
         for entity_id in hass.states.async_entity_ids("todo"):
             if entity_id.startswith("todo.dt_"):
                 entity_entry = entity_registry.async_get(entity_id)
                 if entity_entry and entity_entry.config_entry_id == entry.entry_id:
                     # Trigger update - this will refresh the coordinator
-                    await hass.helpers.entity_component.async_update_entity(entity_id)
+                    hass.async_create_task(
+                        hass.helpers.entity_component.async_update_entity(entity_id)
+                    )
                     
     except Exception as e:
         _LOGGER.error("Failed to complete task %d: %s", task_id, e)
@@ -248,6 +307,100 @@ async def async_delete_task_service(hass: HomeAssistant, call: ServiceCall) -> N
     except Exception as e:
         _LOGGER.error("Failed to delete task %d: %s", task_id, e)
 
+async def async_skip_task_service(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Handle the skip_task service call."""
+    task_id = call.data["task_id"]
+    config_entry_id = call.data.get("config_entry_id")
+
+    entry = await _get_config_entry(hass, config_entry_id)
+    if not entry:
+        return
+
+    session = async_get_clientsession(hass)
+    client = DonetickApiClient(
+        hass.data[DOMAIN][entry.entry_id][CONF_URL],
+        hass.data[DOMAIN][entry.entry_id][CONF_TOKEN],
+        session,
+    )
+
+    try:
+        await client.async_skip_task(task_id)
+        _LOGGER.info("Task %d skipped successfully", task_id)
+        await _refresh_todo_entities(hass, entry.entry_id)
+    except Exception as e:
+        _LOGGER.error("Failed to skip task %d: %s", task_id, e)
+
+
+async def async_undo_complete_service(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Handle the undo_complete service call."""
+    task_id = call.data["task_id"]
+    config_entry_id = call.data.get("config_entry_id")
+
+    entry = await _get_config_entry(hass, config_entry_id)
+    if not entry:
+        return
+
+    session = async_get_clientsession(hass)
+    client = DonetickApiClient(
+        hass.data[DOMAIN][entry.entry_id][CONF_URL],
+        hass.data[DOMAIN][entry.entry_id][CONF_TOKEN],
+        session,
+    )
+
+    try:
+        await client.async_uncomplete_task(task_id)
+        _LOGGER.info("Task %d completion undone successfully", task_id)
+        await _refresh_todo_entities(hass, entry.entry_id)
+    except Exception as e:
+        _LOGGER.error("Failed to undo completion for task %d: %s", task_id, e)
+
+
+async def async_update_schedule_service(hass: HomeAssistant, call: ServiceCall) -> None:
+    """Handle the update_schedule service call.
+
+    Accepts human-friendly fields (time_of_day, timezone) and builds the
+    correct frequencyMetadata dict before delegating to the API client.
+    """
+    task_id = call.data["task_id"]
+    config_entry_id = call.data.get("config_entry_id")
+
+    entry = await _get_config_entry(hass, config_entry_id)
+    if not entry:
+        return
+
+    session = async_get_clientsession(hass)
+    client = DonetickApiClient(
+        hass.data[DOMAIN][entry.entry_id][CONF_URL],
+        hass.data[DOMAIN][entry.entry_id][CONF_TOKEN],
+        session,
+    )
+
+    # Build frequencyMetadata from convenience fields
+    frequency_metadata = None
+    time_of_day = call.data.get("time_of_day")
+    timezone = call.data.get("timezone", "America/Chicago")
+    if time_of_day:
+        # Donetick expects a full datetime string for the time field, but
+        # the API will extract just the HH:MM portion. We send today's date
+        # with the requested time in the configured timezone.
+        today = date.today().isoformat()
+        frequency_metadata = {"time": f"{today}T{time_of_day}:00", "timezone": timezone}
+
+    try:
+        await client.async_update_task_schedule(
+            task_id=task_id,
+            frequency_type=call.data.get("frequency_type"),
+            frequency=call.data.get("frequency"),
+            frequency_metadata=frequency_metadata,
+            is_rolling=call.data.get("is_rolling"),
+            next_due_date=call.data.get("next_due_date"),
+        )
+        _LOGGER.info("Schedule for task %d updated successfully", task_id)
+        await _refresh_todo_entities(hass, entry.entry_id)
+    except Exception as e:
+        _LOGGER.error("Failed to update schedule for task %d: %s", task_id, e)
+
+
 async def _get_config_entry(hass: HomeAssistant, config_entry_id: str = None) -> ConfigEntry:
     """Get the config entry to use for the service call."""
     entry = None
@@ -257,7 +410,7 @@ async def _get_config_entry(hass: HomeAssistant, config_entry_id: str = None) ->
         
         # If not found, check if it's an entity ID and extract config entry from it
         if not entry and config_entry_id.startswith("todo."):
-            entity_registry = hass.helpers.entity_registry.async_get()
+            entity_registry = er.async_get(hass)
             entity_entry = entity_registry.async_get(config_entry_id)
             if entity_entry:
                 entry = hass.config_entries.async_get_entry(entity_entry.config_entry_id)
@@ -277,13 +430,15 @@ async def _get_config_entry(hass: HomeAssistant, config_entry_id: str = None) ->
 
 async def _refresh_todo_entities(hass: HomeAssistant, config_entry_id: str) -> None:
     """Refresh all todo entities for the given config entry."""
-    entity_registry = hass.helpers.entity_registry.async_get()
+    entity_registry = er.async_get(hass)
     for entity_id in hass.states.async_entity_ids("todo"):
         if entity_id.startswith("todo.dt_"):
             entity_entry = entity_registry.async_get(entity_id)
             if entity_entry and entity_entry.config_entry_id == config_entry_id:
                 # Trigger update - this will refresh the coordinator
-                await hass.helpers.entity_component.async_update_entity(entity_id)
+                hass.async_create_task(
+                    hass.helpers.entity_component.async_update_entity(entity_id)
+                )
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
@@ -293,12 +448,21 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         
         # Remove services if this is the last config entry
         if not hass.data[DOMAIN]:
-            for service_name in [SERVICE_COMPLETE_TASK, SERVICE_CREATE_TASK, SERVICE_UPDATE_TASK, SERVICE_DELETE_TASK]:
+            for service_name in [
+                SERVICE_COMPLETE_TASK, SERVICE_CREATE_TASK,
+                SERVICE_UPDATE_TASK, SERVICE_DELETE_TASK,
+                SERVICE_SKIP_TASK, SERVICE_UNDO_COMPLETE,
+                SERVICE_UPDATE_SCHEDULE,
+            ]:
                 if hass.services.has_service(DOMAIN, service_name):
                     hass.services.async_remove(DOMAIN, service_name)
-            _LOGGER.debug("Removed services: %s.%s, %s.%s, %s.%s, %s.%s", 
-                          DOMAIN, SERVICE_COMPLETE_TASK, DOMAIN, SERVICE_CREATE_TASK, 
-                          DOMAIN, SERVICE_UPDATE_TASK, DOMAIN, SERVICE_DELETE_TASK)
+            _LOGGER.debug(
+                "Removed services: %s.%s, %s.%s, %s.%s, %s.%s, %s.%s, %s.%s, %s.%s",
+                DOMAIN, SERVICE_COMPLETE_TASK, DOMAIN, SERVICE_CREATE_TASK,
+                DOMAIN, SERVICE_UPDATE_TASK, DOMAIN, SERVICE_DELETE_TASK,
+                DOMAIN, SERVICE_SKIP_TASK, DOMAIN, SERVICE_UNDO_COMPLETE,
+                DOMAIN, SERVICE_UPDATE_SCHEDULE,
+            )
     
     return unload_ok
 
