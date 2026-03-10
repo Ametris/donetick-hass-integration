@@ -7,7 +7,7 @@ import aiohttp
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import API_TIMEOUT
-from .model import DonetickTask, DonetickThing, DonetickMember
+from .model import DonetickTask, DonetickThing, DonetickMember, DonetickLabel
 _LOGGER = logging.getLogger(__name__)
 
 class DonetickApiClient:
@@ -46,6 +46,35 @@ class DonetickApiClient:
             raise
         except (KeyError, ValueError, json.JSONDecodeError) as err:
             _LOGGER.error("Error parsing Donetick response: %s", err)
+            return []
+
+    async def async_get_labels(self) -> List[DonetickLabel]:
+        """Get labels from Donetick."""
+        headers = {
+            "secretkey": f"{self._token}",
+            "Content-Type": "application/json",
+        }
+
+        try:
+            async with self._session.get(
+                f"{self._base_url}/eapi/v1/label",
+                headers=headers,
+                timeout=API_TIMEOUT
+            ) as response:
+                response.raise_for_status()
+                data = await response.json()
+
+                if not isinstance(data, list):
+                    _LOGGER.error("Unexpected response format from Donetick labels API")
+                    return []
+
+                return [DonetickLabel.from_json(label) for label in data]
+
+        except aiohttp.ClientError as err:
+            _LOGGER.error("Error fetching labels from Donetick: %s", err)
+            return []
+        except (KeyError, ValueError, json.JSONDecodeError) as err:
+            _LOGGER.error("Error parsing Donetick labels response: %s", err)
             return []
 
     async def async_get_circle_members(self) -> List[DonetickMember]:
