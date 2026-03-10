@@ -44,7 +44,7 @@ create_task:
           multiline: true
     due_date:
       name: Due Date
-      description: Task due date in RFC3339 format (optional, e.g., 2025-07-28T18:00:00Z)
+      description: "Task due date in RFC3339 format (optional, e.g., 2025-07-28T18:00:00Z)"
       required: false
       selector:
         text:
@@ -90,7 +90,7 @@ update_task:
           multiline: true
     due_date:
       name: Due Date
-      description: New task due date in RFC3339 format (optional, e.g., 2025-07-28T18:00:00Z)
+      description: "New task due date in RFC3339 format (optional, e.g., 2025-07-28T18:00:00Z)"
       required: false
       selector:
         text:
@@ -199,19 +199,19 @@ update_schedule:
         boolean:
     time_of_day:
       name: Time of Day
-      description: Time to anchor the schedule in HH:MM (24-hour) format, e.g. 00:00 for midnight
+      description: "Time to anchor the schedule in HH:MM (24-hour) format, e.g. 00:00 for midnight"
       required: false
       selector:
         text:
     timezone:
       name: Timezone
-      description: Timezone for the time_of_day field (default: America/Chicago)
+      description: "Timezone for the time_of_day field (default: America/Chicago)"
       required: false
       selector:
         text:
     next_due_date:
       name: Next Due Date
-      description: Override the next due date (ISO 8601, e.g. 2026-03-15T00:00:00Z)
+      description: "Override the next due date (ISO 8601, e.g. 2026-03-15T00:00:00Z)"
       required: false
       selector:
         text:
