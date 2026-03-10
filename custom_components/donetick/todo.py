@@ -18,9 +18,9 @@ from homeassistant.helpers.update_coordinator import (
 )
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
-from .const import DOMAIN, CONF_URL, CONF_TOKEN, CONF_SHOW_DUE_IN, CONF_CREATE_UNIFIED_LIST, CONF_CREATE_ASSIGNEE_LISTS, CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL
+from .const import DOMAIN, CONF_URL, CONF_TOKEN, CONF_SHOW_DUE_IN, CONF_CREATE_UNIFIED_LIST, CONF_CREATE_ASSIGNEE_LISTS, CONF_CREATE_LABEL_LISTS, CONF_REFRESH_INTERVAL, DEFAULT_REFRESH_INTERVAL
 from .api import DonetickApiClient
-from .model import DonetickTask, DonetickMember
+from .model import DonetickTask, DonetickMember, DonetickLabel
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -83,6 +83,22 @@ async def async_setup_entry(
     else:
         _LOGGER.debug("Assignee lists not enabled in config")
     
+    # Create per-label lists if enabled
+    create_label_lists = config_entry.options.get(CONF_CREATE_LABEL_LISTS, config_entry.data.get(CONF_CREATE_LABEL_LISTS, False))
+    if create_label_lists:
+        _LOGGER.debug("Label lists enabled in config")
+        try:
+            labels = await client.async_get_labels()
+            _LOGGER.debug("Found %d labels", len(labels))
+            for label in labels:
+                entity = DonetickLabelTasksList(coordinator, config_entry, label)
+                entity._circle_members = circle_members
+                entities.append(entity)
+        except Exception as e:
+            _LOGGER.error("Failed to get labels: %s", e)
+    else:
+        _LOGGER.debug("Label lists not enabled in config")
+
     _LOGGER.debug("Creating %d total entities", len(entities))
     async_add_entities(entities)
 
@@ -349,3 +365,34 @@ class DonetickTodoListEntity(DonetickAllTasksList):
         """Initialize the Todo List."""
         super().__init__(coordinator, config_entry)
         self._attr_unique_id = f"dt_{config_entry.entry_id}"
+
+
+
+class DonetickLabelTasksList(DonetickTodoListBase):
+    """Donetick Label-specific Tasks List entity."""
+
+    def __init__(self, coordinator: DataUpdateCoordinator, config_entry: ConfigEntry, label: DonetickLabel) -> None:
+        """Initialize the Label Tasks List."""
+        super().__init__(coordinator, config_entry)
+        self._label = label
+        self._attr_unique_id = f"dt_{config_entry.entry_id}_label_{label.id}_tasks"
+        self._attr_name = f"{label.name}"
+
+    def _filter_tasks(self, tasks):
+        """Return tasks that have this label."""
+        return [
+            task for task in tasks
+            if task.is_active and any(
+                lbl.get("id") == self._label.id
+                for lbl in (task.labels_v2 or [])
+            )
+        ]
+
+    @property
+    def extra_state_attributes(self):
+        """Return label-specific extra state attributes."""
+        attributes = super().extra_state_attributes
+        attributes["label_id"] = self._label.id
+        attributes["label_name"] = self._label.name
+        attributes["label_color"] = self._label.color
+        return attributes
