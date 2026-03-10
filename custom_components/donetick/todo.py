@@ -151,6 +151,34 @@ class DonetickTodoListBase(CoordinatorEntity, TodoListEntity):
                 for member in self._circle_members
             ]
         
+        # Expose full task data including labels_v2, frequency_type, and priority
+        if self.coordinator.data is not None:
+            filtered_tasks = self._filter_tasks(self.coordinator.data)
+            attributes["tasks"] = [
+                {
+                    "id": task.id,
+                    "name": task.name,
+                    "status": task.status,
+                    "priority": task.priority,
+                    "frequency_type": task.frequency_type,
+                    "frequency": task.frequency,
+                    "next_due_date": task.next_due_date.isoformat() if task.next_due_date else None,
+                    "labels": [
+                        {
+                            "id": lbl.get("id"),
+                            "name": lbl.get("name"),
+                            "color": lbl.get("color"),
+                        }
+                        for lbl in (task.labels_v2 or [])
+                    ],
+                    "assigned_to": task.assigned_to,
+                    "description": task.description or "",
+                    "is_active": task.is_active,
+                }
+                for task in filtered_tasks
+                if task.is_active
+            ]
+        
         return attributes
 
     async def async_create_todo_item(self, item: TodoItem) -> None:
@@ -321,4 +349,3 @@ class DonetickTodoListEntity(DonetickAllTasksList):
         """Initialize the Todo List."""
         super().__init__(coordinator, config_entry)
         self._attr_unique_id = f"dt_{config_entry.entry_id}"
-
