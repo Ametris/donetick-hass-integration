@@ -1,4 +1,8 @@
 {
-    "name": "Donetick-modified : Simplify Tasks & Chores, Together.",
-    "homeassistant": "2023.11"
-  }
+  "name": "Donetick",
+  "content_in_root": false,
+  "render_readme": true,
+  "homeassistant": "2023.0.0",
+  "country": ["US"],
+  "domains": ["donetick"]
+}
