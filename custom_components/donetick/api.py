@@ -49,32 +49,30 @@ class DonetickApiClient:
             return []
 
     async def async_get_labels(self) -> List[DonetickLabel]:
-        """Get labels from Donetick."""
-        headers = {
-            "secretkey": f"{self._token}",
-            "Content-Type": "application/json",
-        }
-
+        """Derive unique labels from tasks since /eapi/v1/label is not exposed.
+        
+        The eAPI does not have a dedicated label endpoint. Labels are embedded
+        in each task's labelsV2 field, so we extract and deduplicate them here.
+        """
         try:
-            async with self._session.get(
-                f"{self._base_url}/eapi/v1/label",
-                headers=headers,
-                timeout=API_TIMEOUT
-            ) as response:
-                response.raise_for_status()
-                data = await response.json()
-
-                if not isinstance(data, list):
-                    _LOGGER.error("Unexpected response format from Donetick labels API")
-                    return []
-
-                return [DonetickLabel.from_json(label) for label in data]
-
-        except aiohttp.ClientError as err:
-            _LOGGER.error("Error fetching labels from Donetick: %s", err)
-            return []
-        except (KeyError, ValueError, json.JSONDecodeError) as err:
-            _LOGGER.error("Error parsing Donetick labels response: %s", err)
+            tasks = await self.async_get_tasks()
+            seen_ids: set[int] = set()
+            labels: List[DonetickLabel] = []
+            for task in tasks:
+                for lbl in (task.labels_v2 or []):
+                    lbl_id = lbl.get("id")
+                    if lbl_id is not None and lbl_id not in seen_ids:
+                        seen_ids.add(lbl_id)
+                        labels.append(DonetickLabel(
+                            id=lbl_id,
+                            name=lbl.get("name", ""),
+                            color=lbl.get("color"),
+                        ))
+            labels.sort(key=lambda l: l.id)
+            _LOGGER.debug("Derived %d unique labels from tasks", len(labels))
+            return labels
+        except Exception as err:
+            _LOGGER.error("Error deriving labels from tasks: %s", err)
             return []
 
     async def async_get_circle_members(self) -> List[DonetickMember]:
