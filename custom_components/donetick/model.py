@@ -71,7 +71,8 @@ class DonetickTask:
     frequency_metadata: str
     assigned_to: Optional[int] = None
     description: Optional[str] = None
-    
+    labels_v2: Optional[List[dict]] = None
+
     @classmethod
     def from_json(cls, data: dict) -> "DonetickTask":
         """Create a DonetickTask from JSON data."""
@@ -93,7 +94,8 @@ class DonetickTask:
             frequency=data["frequency"],
             frequency_metadata=data["frequencyMetadata"],
             assigned_to=assigned_to,
-            description=data.get("description")
+            description=data.get("description"),
+            labels_v2=data.get("labelsV2") or [],
         )
     
     @classmethod
@@ -133,4 +135,3 @@ class DonetickThing:
     def from_json_list(cls, data: List[dict]) -> List["DonetickThing"]:
         """Create a list of DonetickThings from JSON data."""
         return [cls.from_json(thing) for thing in data]
-    
