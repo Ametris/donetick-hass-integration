@@ -52,6 +52,32 @@ class DonetickMember:
         return [cls.from_json(member) for member in data]
 
 @dataclass
+class DonetickLabel:
+    """Donetick label model."""
+    id: int
+    name: str
+    color: Optional[str] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    @classmethod
+    def from_json(cls, data: dict) -> "DonetickLabel":
+        """Create a DonetickLabel from JSON data."""
+        return cls(
+            id=data["id"],
+            name=data["name"],
+            color=data.get("color"),
+            created_at=data.get("createdAt"),
+            updated_at=data.get("updatedAt"),
+        )
+
+    @classmethod
+    def from_json_list(cls, data: List[dict]) -> List["DonetickLabel"]:
+        """Create a list of DonetickLabels from JSON data."""
+        return [cls.from_json(label) for label in data]
+
+
+@dataclass
 class DonetickAssignee:
     """Donetick assignee model."""
     user_id: int
